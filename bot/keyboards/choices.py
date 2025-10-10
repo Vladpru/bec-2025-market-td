@@ -26,8 +26,9 @@ def get_admin_menu_kb() -> InlineKeyboardMarkup:
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="⚙️ Керування товарами", callback_data="admin_manage_items")],
         [InlineKeyboardButton(text="⏱️ Встановлення обмежень", callback_data="admin_set_limits")],
-        [InlineKeyboardButton(text="🛒 Перегляд замовлень", callback_data="admin_view_orders")],
         [InlineKeyboardButton(text="📊 Перегляд аналітики", callback_data="admin_view_analytics")],
+        [InlineKeyboardButton(text="⏳ Керування фазами гри", callback_data="admin_set_phase")],
+        [InlineKeyboardButton(text="🔄 Перерахувати ціни (динаміка)", callback_data="admin_recalculate_prices")],
         [
             InlineKeyboardButton(text="🏪 Увімкнути магазин", callback_data="admin_shop_on"),
             InlineKeyboardButton(text="❌ Вимкнути магазин", callback_data="admin_shop_off")

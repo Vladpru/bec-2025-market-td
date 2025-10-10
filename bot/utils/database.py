@@ -209,3 +209,4 @@ async def is_team_exist(team_name: str) -> bool:
 async def is_team_password_correct(team_name: str, password: str) -> bool:
     team = await teams_collection.find_one({"team_name": team_name, "password": password})
     return team is not None
+

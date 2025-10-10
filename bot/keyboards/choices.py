@@ -4,7 +4,7 @@ captain_menu_kb = InlineKeyboardMarkup(inline_keyboard=[
     [InlineKeyboardButton(text="🎟️ Баланс купонів", callback_data="captain_coupons")],
     [InlineKeyboardButton(text="📦 Мої матеріали", callback_data="captain_materials")],
     [InlineKeyboardButton(text="🛍️ Магазин", callback_data="captain_shop")],
-    [InlineKeyboardButton(text="🛒 Кошик", callback_data="captain_cart")],
+    [InlineKeyboardButton(text="🛒 Кошик", callback_data="view_cart")],
     [InlineKeyboardButton(text="📜 Мої замовлення", callback_data="captain_orders")],
     [InlineKeyboardButton(text="🔄 Обмін товару", callback_data="captain_exchange")],
     [InlineKeyboardButton(text="↩ Повернення", callback_data="captain_return")],

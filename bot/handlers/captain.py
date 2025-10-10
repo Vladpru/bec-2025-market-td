@@ -1,6 +1,4 @@
-# bot/handlers/captain_handlers.py (ПОВНА ВЕРСІЯ)
 
-import datetime
 from aiogram import Router, types, F, Bot
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
@@ -20,8 +18,6 @@ class CaptainLogin(StatesGroup):
     team_name = State()
     password = State()
 
-class CaptainActions(StatesGroup):
-    shop_choosing_quantity = State()
 
 # --- АВТОРИЗАЦІЯ ---
 @router.message(F.text == "Командир команди")
@@ -99,13 +95,6 @@ async def show_materials(callback: types.CallbackQuery):
     
     await callback.message.edit_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="⬅️ Назад", callback_data="captain_main_menu")]]))
     await log_action("View Owned Materials", callback.from_user.id)
-
-# --- МАГАЗИН ---
-@router.callback_query(F.data == "captain_shop")
-async def show_shop_start(callback: types.CallbackQuery, state: FSMContext):
-    # Цей код та FSM для кошика потрібно додати з попередніх відповідей
-    # Він використовує пагінацію і додавання в кошик
-    await callback.message.answer("Тут буде реалізовано магазин (див. попередні інструкції).")
 
 # --- ІСТОРІЯ ЗАМОВЛЕНЬ ---
 @router.callback_query(F.data == "captain_orders")

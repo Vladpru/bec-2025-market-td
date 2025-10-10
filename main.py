@@ -6,7 +6,7 @@ from aiogram.fsm.storage.memory import MemoryStorage
 from bot.admin import admin_start
 from config import load_config
 from bot.middleware.check_user import AuthMiddleware
-from bot.handlers import captain, helpdesk, organizer, organizer_analytics, organizer_limits, organizer_phase, organizer_shop, registration, start, main_menu, create_team, team, about_event, find_team
+from bot.handlers import captain, captain_shop, helpdesk, organizer, organizer_analytics, organizer_limits, organizer_phase, organizer_shop, registration, start
 from bot.utils.database import get_database
 
 config = load_config()
@@ -26,19 +26,15 @@ async def main():
     
     dp.include_routers(
         start.router,
-        about_event.router,
         registration.router,
         captain.router,
+        captain_shop.router,
         helpdesk.router,
         organizer.router,
         organizer_shop.router,
         organizer_limits.router,
         organizer_phase.router,
         organizer_analytics.router,
-        main_menu.router,
-        create_team.router,
-        find_team.router,
-        team.router,
         admin_start.router
     )
     

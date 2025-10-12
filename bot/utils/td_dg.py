@@ -6,14 +6,15 @@ import asyncio
 config = load_config_td()
 
 
-client = AsyncIOMotorClient(config.mongo_uri)
+client = AsyncIOMotorClient(config.mongo_uri, tz_aware=True)
 db = client["td"]  
 
 users_collection = db["users"]
 products_collection = db["products"]
 config_collection = db["shop_config"]
-teams_collection = db["teams"]
 orders_collection = db["orders"]
+returns_log_collection = db["returns_log"]
+
 
 async def is_team_exist(team_name: str) -> bool:
     # Шукаємо хоча б одного користувача з такою назвою команди

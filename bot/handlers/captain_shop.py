@@ -1,4 +1,6 @@
-from bot.utils.shop_logic import get_shop_config, check_purchase_rules, PHASE_NAMES
+from os import getenv
+from bot.utils.shop_logic import get_shop_config, check_order_cooldown, check_item_rules, PHASE_NAMES, STATUS_EMOJI
+from datetime import timezone
 import datetime
 from aiogram import Router, types, F, Bot
 from aiogram.fsm.context import FSMContext
@@ -10,7 +12,6 @@ from bot.utils.td_dg import (
     products_collection, users_collection, orders_collection, is_team_exist, is_team_password_correct
 )
 from bot.utils.sheetslogger import log_action 
-from bot.keyboards.choices import captain_menu_kb
 
 class CaptainActions(StatesGroup):
     shop_choosing_quantity = State()
@@ -62,7 +63,8 @@ async def view_shop_page(message_or_callback, state: FSMContext, page: int):
     total_items = await products_collection.count_documents(db_filter)
     
     user = await users_collection.find_one({"telegram_id": str(message_or_callback.from_user.id)})
-    text = f"🛍️ **Магазин** (Фаза: *{PHASE_NAMES[current_phase]}*)\nБаланс: {user['budget']}\n\n"
+    text = f"🛍️ **Магазин** (Фаза: *{PHASE_NAMES[current_phase]}*)\n\n"
+
     if not config['is_open']:
         text += "🔴 **УВАГА: Магазин наразі зачинено!**\n\n"
     elif current_phase == 0:
@@ -117,10 +119,9 @@ async def add_to_cart_quantity(message: types.Message, state: FSMContext):
     quantity = int(message.text)
     data = await state.get_data()
     product_id = ObjectId(data.get("product_to_add"))
-    user = await users_collection.find_one({"telegram_id": str(message.from_user.id)})
-
-    # ПЕРЕВІРКА ПРАВИЛ перед додаванням в кошик
-    is_allowed, reason = await check_purchase_rules(product_id, quantity, user['team_name'])
+    
+    # ВИПРАВЛЕНО: Викликаємо просту перевірку тільки для товару
+    is_allowed, reason = await check_item_rules(product_id, quantity)
     if not is_allowed:
         return await message.answer(f"❌ **Помилка:** {reason}\n\nВведіть іншу кількість або поверніться в магазин.")
         
@@ -132,9 +133,10 @@ async def add_to_cart_quantity(message: types.Message, state: FSMContext):
     cart[str(product_id)] = cart.get(str(product_id), 0) + quantity
     
     await state.update_data(cart=cart)
-    await state.set_state(None) # Виходимо зі стану FSM
+    await state.set_state(None)
     await message.answer(f"✅ Додано '{product['name']}' x{quantity} до кошика.")
-    await view_shop_page(message, state, page=1) # Повертаємо в магазин
+    await view_shop_page(message, state, page=1)
+
 
 # --- 3. КОШИК ТА ОФОРМЛЕННЯ ЗАМОВЛЕННЯ ---
 @router.callback_query(F.data == "view_cart" or F.data == "captain_cart")
@@ -176,23 +178,28 @@ async def clear_cart(callback: types.CallbackQuery, state: FSMContext):
     await callback.answer("Кошик очищено!", show_alert=True)
     await callback.message.delete()
     await view_shop_page(callback.message, state, page=1)
-    
+   
 @router.callback_query(F.data == "place_order")
 async def place_order(callback: types.CallbackQuery, state: FSMContext, bot: Bot):
-    await callback.message.edit_text("⏳ Обробляємо ваше замовлення...")
+    await callback.message.edit_text("Замовлення обробляється, будь ласка, зачекайте...")
     data = await state.get_data()
     cart = data.get("cart", {})
     user = await users_collection.find_one({"telegram_id": str(callback.from_user.id)})
     team_name = user['team_name']
     
-    items_for_order, total_cost = [], 0
+    # 1. Спочатку перевіряємо глобальне правило інтервалу для всього замовлення
+    is_order_allowed, order_reason = await check_order_cooldown(team_name)
+    if not is_order_allowed:
+        return await callback.message.edit_text(f"❌ Помилка: {order_reason}")
 
-    # ФІНАЛЬНА ПЕРЕВІРКА ПРАВИЛ, НАЯВНОСТІ ТА РОЗРАХУНОК
+    items_for_order, total_cost = [], 0
     for product_id_str, quantity in cart.items():
         product_id = ObjectId(product_id_str)
-        is_allowed, reason = await check_purchase_rules(product_id, quantity, team_name)
-        if not is_allowed:
-            await callback.message.edit_text(f"❌ Помилка: {reason}\nСпробуйте сформувати кошик заново.")
+        
+        # Перевірка правил на рівні товару
+        is_item_allowed, item_reason = await check_item_rules(product_id, quantity)
+        if not is_item_allowed:
+            await callback.message.edit_text(f"❌ Помилка: {item_reason}\nСпробуйте сформувати кошик заново.")
             return await state.update_data(cart={})
 
         product = await products_collection.find_one({"_id": product_id})
@@ -208,6 +215,20 @@ async def place_order(callback: types.CallbackQuery, state: FSMContext, bot: Bot
 
     # --- ТРАНЗАКЦІЯ ---
     try:
+        last_order_number = await orders_collection.count_documents({})
+        
+        # Створюємо змінну з часом для діагностики
+        order_creation_time = datetime.datetime.now(timezone.utc)
+        
+        # --- ДІАГНОСТИЧНИЙ PRINT ---
+        # print(f"[DEBUG] Час, що ЗАПИСУЄТЬСЯ в базу: {order_creation_time}, TZinfo: {order_creation_time.tzinfo}")
+
+        order_doc = {
+            "order_number": last_order_number + 1, "team_name": team_name,
+            "captain_telegram_id": callback.from_user.id, "items": items_for_order,
+            "total_cost": total_cost, "status": "new", "created_at": order_creation_time
+        }
+        await orders_collection.insert_one(order_doc)
         for item in items_for_order:
             await products_collection.update_one({"_id": item['product_id']}, {"$inc": {"stock_quantity": -item['quantity']}})
         
@@ -216,10 +237,21 @@ async def place_order(callback: types.CallbackQuery, state: FSMContext, bot: Bot
         last_order_number = await orders_collection.count_documents({})
         order_doc = {
             "order_number": last_order_number + 1, "team_name": team_name,
-            "captain_telegram_id": callback.from_user.id, "items": items_for_order,
-            "total_cost": total_cost, "status": "new", "created_at": datetime.datetime.utcnow()
+            "captain_telegram_id": callback.from_user.id, 
+            "items": items_for_order,
+            "total_cost": total_cost, "status": "new", 
+            "created_at": datetime.datetime.now(timezone.utc)
         }
-        await orders_collection.insert_one(order_doc)
+
+        try:
+            helpdesk_chat_id = getenv("HELPDESK_CHAT_ID")
+            if helpdesk_chat_id:
+                notification_text = (f"🔔 **Нове замовлення!**\n\n"
+                                     f"**№{order_doc['order_number']}** від команди **{team_name}**.\n"
+                                     f"Зайдіть в меню 'Активні замовлення' для обробки.")
+                await bot.send_message(helpdesk_chat_id, notification_text, parse_mode="Markdown")
+        except Exception as e:
+            print(f"Помилка відправки сповіщення для HelpDesk: {e}")
 
         await state.update_data(cart={})
         await callback.message.edit_text(f"✅ Ваше замовлення №{order_doc['order_number']} успішно оформлено! Очікуйте на сповіщення.")
@@ -233,4 +265,3 @@ async def place_order(callback: types.CallbackQuery, state: FSMContext, bot: Bot
     except Exception as e:
         await callback.message.edit_text("❌ Сталася критична помилка. Зверніться до організаторів.")
         await log_action("CRITICAL Order Error", callback.from_user.id, str(e))
-

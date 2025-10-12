@@ -22,16 +22,10 @@ class RejectOrder(StatesGroup):
     waiting_for_reason = State()
 
 async def refresh_orders_view(message: types.Message):
-    """Видаляє старі повідомлення і показує актуальний список замовлень."""
-    # Це спрощений підхід: ми просто видаляємо старе повідомлення і викликаємо початковий хендлер
     await message.delete()
-    # Імітуємо новий запит на перегляд
     await show_active_orders(message)
 
 async def update_active_orders_view(message: types.Message):
-    """
-    Централізована функція для оновлення списку активних замовлень.
-    """
     active_orders = await orders_collection.find(
         {"status": {"$in": ["new", "approved"]}}
     ).sort("created_at", 1).to_list(length=20)
@@ -77,10 +71,34 @@ async def process_helpdesk_password(message: types.Message, state: FSMContext):
 
     if login == expected_login and password == expected_password:
         await state.clear()
+        
+        await users_collection.update_one(
+            {"telegram_id": str(message.from_user.id)},
+            {"$set": {
+                "username": message.from_user.username,
+                "telegram_id": str(message.from_user.id),
+                "role": "helpdesk",
+                "chat_id": message.chat.id
+            }},
+            upsert=True  
+        )
+
         await message.answer("Вітаємо чемпіонів HelpDesk! Оберіть дію:", reply_markup=get_helpdesk_menu_kb())
+        
+        await log_action(
+            action="HelpDesk Login",
+            user_id=message.from_user.id,
+            username=message.from_user.username,
+            team_name="N/A" # У HelpDesk немає команди
+        )
     else:
         await state.set_state(HelpDeskLogin.waiting_for_login)
         await message.answer("Помилка авторизації. Спробуйте знову.\n\nВведіть логін HelpDesk:")
+        await log_action(
+            action="Failed HelpDesk Login",
+            user_id=message.from_user.id,
+            username=message.from_user.username
+        )
 
 @router.callback_query(F.data == "hd_active_orders")
 async def show_active_orders(callback: types.CallbackQuery):
@@ -247,7 +265,6 @@ async def process_rejection_reason(message: types.Message, state: FSMContext, bo
     await state.clear()
 
 
-# --- ІНШІ ФУНКЦІЇ (заглушки) ---
 @router.callback_query(F.data == "hd_general_history")
 async def show_general_history(callback: types.CallbackQuery):
     await callback.answer("Цей функціонал в розробці.", show_alert=True)

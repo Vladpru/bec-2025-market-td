@@ -15,9 +15,77 @@ from bot.utils.sheetslogger import log_action
 
 class CaptainActions(StatesGroup):
     shop_choosing_quantity = State()
+    writing_exchange_request = State()
+    writing_return_request = State()
 
 router = Router()
 
+async def view_shop_page(message_or_callback, state: FSMContext, page: int):
+    """Основна функція для відображення сторінки магазину (ОНОВЛЕНА)."""
+    if isinstance(message_or_callback, types.CallbackQuery):
+        message = message_or_callback.message
+    else:
+        message = message_or_callback
+
+    config = await get_shop_config()
+    current_phase = config['phase']
+    
+    ITEMS_PER_PAGE = 5
+    skip = (page - 1) * ITEMS_PER_PAGE
+
+    db_filter = {"stock_quantity": {"$gt": 0}}
+    
+    if current_phase == 1:
+        db_filter["description"] = {"$in": ["Tier 1", "Tier 2", "Tier 3"]}
+    elif current_phase == 2:
+        db_filter["description"] = {"$in": ["Tier 1", "Tier 2", "Tier 3", "Tier 4", "Tier 5", "Tier 6"]}
+
+    products = await products_collection.find(db_filter).skip(skip).limit(ITEMS_PER_PAGE).to_list(length=ITEMS_PER_PAGE)
+    total_items = await products_collection.count_documents(db_filter)
+    
+    user = await users_collection.find_one({"telegram_id": str(message_or_callback.from_user.id)})
+    
+    # --- КЛЮЧОВА ЗМІНА ТУТ ---
+    # Додаємо баланс та час оновлення в текст повідомлення.
+    # Це гарантує, що текст ЗАВЖДИ буде унікальним при кожному оновленні.
+    timestamp = datetime.datetime.now(timezone.utc).strftime('%H:%M:%S UTC')
+    text = (f"🛍️ **Магазин** (Фаза: *{PHASE_NAMES[current_phase]}*)\n"
+            f"💰 **Ваш баланс:** {user['budget']} купонів\n"
+            f"🕒 Оновлено: {timestamp}\n\n")
+    # --- КІНЕЦЬ ЗМІНИ ---
+
+    if not config['is_open']:
+        text += "🔴 **УВАГА: Магазин наразі зачинено!**\n\n"
+    elif current_phase == 0:
+        text += "⚪️ **УВАГА: Магазин працює в режимі перегляду.**\n\n"
+
+    keyboard_rows = []
+    if products:
+        for p in products:
+            text += (f"🔹 **{p['name']}**\n"
+                     f"   Ціна: {p['price_coupons']} купонів (Доступно: {p['stock_quantity']} шт.)\n\n")
+            if config['is_open'] and current_phase > 0:
+                keyboard_rows.append([InlineKeyboardButton(text=f"➕ Додати '{p['name']}'", callback_data=f"addtocart_{p['_id']}")])
+    else:
+        text += "Товарів немає."
+
+    # ... (решта коду для кнопок навігації залишається без змін) ...
+    nav_buttons = []
+    if page > 1:
+        nav_buttons.append(InlineKeyboardButton(text="⬅️ Попередня", callback_data=f"shoppage_{page-1}"))
+    if total_items > page * ITEMS_PER_PAGE:
+        nav_buttons.append(InlineKeyboardButton(text="Наступна ➡️", callback_data=f"shoppage_{page+1}"))
+    if nav_buttons:
+        keyboard_rows.append(nav_buttons)
+
+    keyboard_rows.append([InlineKeyboardButton(text="🛒 Перейти до кошика", callback_data="view_cart")])
+    keyboard_rows.append([InlineKeyboardButton(text="⬅️ Назад до гол. меню", callback_data="captain_main_menu")])
+    
+    if isinstance(message_or_callback, types.CallbackQuery):
+        await message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard_rows), parse_mode="Markdown")
+    else:
+        await message.answer(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard_rows), parse_mode="Markdown")
+        
 # --- 1. МАГАЗИН (вхід та пагінація) ---
 @router.callback_query(F.data == "captain_shop")
 async def show_shop_start(callback: types.CallbackQuery, state: FSMContext):
@@ -32,72 +100,6 @@ async def handle_shop_page(callback: types.CallbackQuery, state: FSMContext):
     """Обробляє натискання кнопок пагінації в магазині."""
     page = int(callback.data.split("_")[1])
     await view_shop_page(callback, state, page=page)
-
-async def view_shop_page(message_or_callback, state: FSMContext, page: int):
-    """Основна функція для відображення сторінки магазину."""
-    if isinstance(message_or_callback, types.CallbackQuery):
-        message = message_or_callback.message
-    else:
-        message = message_or_callback
-
-    config = await get_shop_config()
-    current_phase = config['phase']
-    
-    ITEMS_PER_PAGE = 5
-    skip = (page - 1) * ITEMS_PER_PAGE
-
-    db_filter = {"stock_quantity": {"$gt": 0}}
-    
-    # 2. Якщо зараз Фаза 1, додаємо до фільтра умову по Tier
-    if current_phase == 1:
-        allowed_tiers = ["Tier 1", "Tier 2", "Tier 3"]
-        # Додаємо до фільтра оператор $in, який шукає документи, 
-        # де поле 'description' є одним зі значень у списку
-        db_filter["description"] = {"$in": allowed_tiers}
-    elif current_phase == 2:
-        allowed_tiers = ["Tier 1", "Tier 2", "Tier 3", "Tier 4", "Tier 5", "Tier 6"]
-        db_filter["description"] = {"$in": allowed_tiers}
-
-    # 3. Використовуємо динамічний фільтр в обох запитах до БД
-    products = await products_collection.find(db_filter).skip(skip).limit(ITEMS_PER_PAGE).to_list(length=ITEMS_PER_PAGE)
-    total_items = await products_collection.count_documents(db_filter)
-    
-    user = await users_collection.find_one({"telegram_id": str(message_or_callback.from_user.id)})
-    text = f"🛍️ **Магазин** (Фаза: *{PHASE_NAMES[current_phase]}*)\n\n"
-
-    if not config['is_open']:
-        text += "🔴 **УВАГА: Магазин наразі зачинено!**\n\n"
-    elif current_phase == 0:
-        text += "⚪️ **УВАГА: Магазин працює в режимі перегляду.**\n\n"
-
-    keyboard_rows = []
-    if products:
-        for p in products:
-            text += (f"🔹 **{p['name']}**\n"
-                     f"   Ціна: {p['price_coupons']} купонів (Доступно: {p['stock_quantity']} шт.)\n\n")
-            # Показуємо кнопки "Додати", тільки якщо покупки дозволені
-            if config['is_open'] and current_phase > 0:
-                keyboard_rows.append([InlineKeyboardButton(text=f"➕ Додати '{p['name']}'", callback_data=f"addtocart_{p['_id']}")])
-    else:
-        text += "Товарів немає."
-
-    # Кнопки навігації
-    nav_buttons = []
-    if page > 1:
-        nav_buttons.append(InlineKeyboardButton(text="⬅️ Попередня", callback_data=f"shoppage_{page-1}"))
-    if total_items > page * ITEMS_PER_PAGE:
-        nav_buttons.append(InlineKeyboardButton(text="Наступна ➡️", callback_data=f"shoppage_{page+1}"))
-    if nav_buttons:
-        keyboard_rows.append(nav_buttons)
-
-    keyboard_rows.append([InlineKeyboardButton(text="🛒 Перейти до кошика", callback_data="view_cart")])
-    keyboard_rows.append([InlineKeyboardButton(text="⬅️ Назад до гол. меню", callback_data="captain_main_menu")])
-    
-    # Використовуємо edit_text для колбеків, answer для нових повідомлень
-    if isinstance(message_or_callback, types.CallbackQuery):
-        await message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard_rows), parse_mode="Markdown")
-    else:
-        await message.answer(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard_rows), parse_mode="Markdown")
 
 # --- 2. ДОДАВАННЯ ТОВАРУ В КОШИК ---
 @router.callback_query(F.data.startswith("addtocart_"))
@@ -244,12 +246,14 @@ async def place_order(callback: types.CallbackQuery, state: FSMContext, bot: Bot
         }
 
         try:
-            helpdesk_chat_id = getenv("HELPDESK_CHAT_ID")
+            helpdesk_chat_id = await users_collection.find({"role": "helpdesk"}).distinct("telegram_id")
             if helpdesk_chat_id:
-                notification_text = (f"🔔 **Нове замовлення!**\n\n"
-                                     f"**№{order_doc['order_number']}** від команди **{team_name}**.\n"
-                                     f"Зайдіть в меню 'Активні замовлення' для обробки.")
-                await bot.send_message(helpdesk_chat_id, notification_text, parse_mode="Markdown")
+                for helpdesk_id in helpdesk_chat_id:
+                    helpdesk_chat_id = int(helpdesk_id)
+                    notification_text = (f"🔔 **Нове замовлення!**\n\n"
+                                        f"**№{order_doc['order_number']}** від команди **{team_name}**.\n"
+                                        f"Зайдіть в меню 'Активні замовлення' для обробки.")
+                    await bot.send_message(helpdesk_id, notification_text, parse_mode="Markdown")
         except Exception as e:
             print(f"Помилка відправки сповіщення для HelpDesk: {e}")
 

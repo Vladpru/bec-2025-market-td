@@ -1,5 +1,9 @@
 # bot/utils/shop_logic.py (ПОВНА СПРОЩЕНА ВЕРСІЯ)
 
+from aiogram import types
+from bot.handlers.helpdesk import show_active_orders
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+from bot.keyboards.choices import get_helpdesk_menu_kb
 from bot.utils.td_dg import config_collection, products_collection, orders_collection
 import datetime
 from datetime import timezone

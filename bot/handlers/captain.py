@@ -2,16 +2,19 @@
 from aiogram import Router, types, F, Bot
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from aiogram.types import ReplyKeyboardRemove, FSInputFile, InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.types import ReplyKeyboardRemove, InlineKeyboardMarkup, InlineKeyboardButton
 from bson.objectid import ObjectId
 
 # Важливо: імпортуйте всі потрібні колекції та функції
+from bot.keyboards.registration import hello_menu_kb
 from bot.utils.shop_logic import STATUS_EMOJI
 from bot.utils.td_dg import (
-    products_collection, users_collection, orders_collection, is_team_exist, is_team_password_correct
+    products_collection, users_collection, orders_collection, is_team_password_correct
 )
+from bot.utils.database import is_team_exist_password, is_team_exist
 from bot.utils.sheetslogger import log_action 
 from bot.keyboards.choices import captain_menu_kb
+from bot.handlers.captain_shop import CaptainActions
 
 router = Router()
 
@@ -25,15 +28,25 @@ async def captain_login_start(message: types.Message, state: FSMContext):
     await state.set_state(CaptainLogin.team_name)
     await message.answer("Введіть назву команди:", reply_markup=ReplyKeyboardRemove())
 
+INITIAL_BUDGET = 1500
+
 @router.message(CaptainLogin.team_name)
 async def process_team_name(message: types.Message, state: FSMContext):
+    """
+    Перевіряє, чи існує команда. Якщо так - запитує пароль для входу.
+    Якщо ні - пропонує створити нову, запитуючи пароль для неї.
+    """
     team_name = message.text
+    
+    await state.update_data(team_name=team_name)
+    await state.set_state(CaptainLogin.password)
+
     if await is_team_exist(team_name):
-        await state.update_data(team_name=team_name)
-        await state.set_state(CaptainLogin.password)
-        await message.answer("Введіть пароль команди:")
+        # Сценарій ВХОДУ: команда вже існує
+        await message.answer(f"Команда '{team_name}' існує. Введіть пароль для входу:")
     else:
-        await message.answer("Такої команди не існує. Спробуйте знову.")
+        await state.clear()
+        await message.answer(f"Команда '{team_name}' не знайдена. Повертаємо вас до головного меню.", reply_markup=hello_menu_kb)
 
 @router.message(CaptainLogin.password)
 async def process_password(message: types.Message, state: FSMContext):
@@ -41,24 +54,37 @@ async def process_password(message: types.Message, state: FSMContext):
     user_data = await state.get_data()
     team_name = user_data.get("team_name")
 
-    # 1. Шукаємо повний документ команди за назвою та паролем
-    team_doc = await users_collection.find_one({"team_name": team_name, "team_password": password})
+    # Знову перевіряємо, чи існує команда, щоб зрозуміти, в якому ми сценарії
+    existing_team = await users_collection.find_one({"team_name": team_name})
 
-    if team_doc:
-        # 2. Якщо знайдено, оновлюємо САМЕ ЦЕЙ ДОКУМЕНТ, додаючи/оновлюючи telegram_id
-        await users_collection.update_one(
-            {"_id": team_doc["_id"]}, # Оновлюємо по унікальному ID знайденого документа
+    if await is_team_exist_password(team_name, password):
+        # Перевіряємо, чи існує запис для цього користувача
+        existing_user = await users_collection.find_one({"telegram_id": str(message.from_user.id)})
+
+        if existing_user:
+            # Якщо запис існує, оновлюємо його
+            await users_collection.update_one(
+            {"telegram_id": str(message.from_user.id)},
             {"$set": {
-                "telegram_id": str(message.from_user.id),
+                "team_name": team_name,
                 "username": message.from_user.username,
                 "role": "captain"
             }}
-        )
-        
+            )
+        else:
+            # Якщо запису немає, створюємо новий
+            await users_collection.insert_one({
+            "telegram_id": str(message.from_user.id),
+            "username": message.from_user.username,
+            "team_name": team_name,
+            "role": "captain",
+            "budget": INITIAL_BUDGET  # Додаємо початковий бюджет
+            })
+
         await state.clear()
-        await message.answer(f"Вітаємо, командире {team_name}! Оберіть одну з дій:", reply_markup=captain_menu_kb)
+        await message.answer(f"✅ Вхід успішний! Вітаємо, командире {team_name}!", reply_markup=captain_menu_kb)
     else:
-        await message.answer("Помилка авторизації. Спробуйте знову.")
+        await message.answer(f"Неправильний пароль. Спробуйте ще раз: ")
 
 # --- ГОЛОВНЕ МЕНЮ ---
 @router.callback_query(F.data == "captain_main_menu")
@@ -163,24 +189,3 @@ async def confirm_receipt(callback: types.CallbackQuery, state: FSMContext):
         team_name=user.get('team_name'),
         details=f"Order #{updated_order['order_number']}"
     )
-
-
-
-# --- ОБМІН/ПОВЕРНЕННЯ/ДОПОМОГА ---
-@router.callback_query(F.data == "captain_exchange")
-async def show_exchange_info(callback: types.CallbackQuery):
-    text = "🔄 Для обміну товару, будь ласка, зверніться до HelpDesk. Опишіть, що ви хочете обміняти."
-    await callback.message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="⬅️ Назад", callback_data="captain_main_menu")]]))
-
-@router.callback_query(F.data == "captain_return")
-async def show_return_info(callback: types.CallbackQuery):
-    text = "↩️ Для повернення товару, будь ласка, зверніться до HelpDesk. Опишіть, що ви хочете повернути."
-    await callback.message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="⬅️ Назад", callback_data="captain_main_menu")]]))
-
-@router.callback_query(F.data == "captain_help")
-async def show_help(callback: types.CallbackQuery):
-    try:
-        instruction_file = FSInputFile("Інстукція Капітан.pdf")
-        await callback.message.answer_document(instruction_file, caption="✏️ Цей файл допоможе розібратись з функціоналом бота")
-    except FileNotFoundError:
-        await callback.answer("Помилка: файл з інструкцією не знайдено.", show_alert=True)

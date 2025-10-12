@@ -12,7 +12,6 @@ captain_menu_kb = InlineKeyboardMarkup(inline_keyboard=[
 ])
 
 def get_helpdesk_menu_kb() -> InlineKeyboardMarkup:
-    """Створює та повертає інлайн-клавіатуру для головного меню HelpDesk."""
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="📝 Активні замовлення", callback_data="hd_active_orders")],
         [InlineKeyboardButton(text="📜 Історія замовлень загальна", callback_data="hd_general_history")],
@@ -22,7 +21,6 @@ def get_helpdesk_menu_kb() -> InlineKeyboardMarkup:
     return keyboard
 
 def get_admin_menu_kb() -> InlineKeyboardMarkup:
-    """Створює та повертає інлайн-клавіатуру для головного меню Адміністратора."""
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="⚙️ Керування товарами", callback_data="admin_manage_items")],
         [InlineKeyboardButton(text="⏱️ Встановлення обмежень", callback_data="admin_set_limits")],

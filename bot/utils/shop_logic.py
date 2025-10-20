@@ -69,10 +69,6 @@ async def check_order_cooldown(team_name: str) -> tuple[bool, str]:
     return True, "OK"
 
 async def check_item_rules(product_id, quantity: int) -> tuple[bool, str]:
-    """
-    Перевіряє правила, що стосуються КОНКРЕТНОГО товару (фази, ліміти).
-    БЕЗ перевірки інтервалу між замовленнями.
-    """
     config = await get_shop_config()
     product = await products_collection.find_one({"_id": product_id})
 
@@ -91,8 +87,12 @@ async def check_item_rules(product_id, quantity: int) -> tuple[bool, str]:
             return False, "Для товарів Tier 1 можна придбати лише 1 одиницю на поточній фазі."
         if "Tier 2" in tier_str and quantity > 3:
             return False, "Для товарів Tier 2 можна придбати не більше 3 одиниць на поточній фазі."
-            
-    if quantity > config["quantity_limit"]:
-        return False, f"Заборонено купувати більше {config['quantity_limit']} одиниць товару за раз."
+        if "Tier 3" in tier_str and quantity > 3:
+            return False, "Для товарів Tier 3 можна придбати не більше 3 одиниць на поточній фазі."
+
+    elif phase == 2:
+        allowed_quantity = product.get("allowed_to_buy")
+        if allowed_quantity is not None and quantity > allowed_quantity:
+            return False, f"Для товару '{product['name']}' можна придбати максимум {allowed_quantity} шт."
 
     return True, "OK"

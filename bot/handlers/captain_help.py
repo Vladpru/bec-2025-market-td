@@ -5,7 +5,7 @@ from aiogram.types import FSInputFile, InlineKeyboardMarkup, InlineKeyboardButto
 
 from bot.handlers.captain_shop import CaptainActions 
 from bot.utils.sheetslogger import log_action
-from bot.utils.td_dg import users_collection
+from bot.utils.td_dg import teams_collection
 from bot.keyboards.choices import captain_menu_kb
 
 router = Router()
@@ -50,7 +50,7 @@ async def process_exchange_request(message: types.Message, state: FSMContext, bo
         if message_id_to_delete:
             await bot.delete_message(chat_id=message.chat.id, message_id=message_id_to_delete)
 
-        user = await users_collection.find_one({"telegram_id": str(message.from_user.id)})
+        user = await teams_collection.find_one({"telegram_id": str(message.from_user.id)})
         if not user:
             return await message.answer("Помилка: не вдалося знайти ваші дані. Спробуйте перезайти.")
             
@@ -67,7 +67,7 @@ async def process_exchange_request(message: types.Message, state: FSMContext, bo
             f"**Дія:** Зв'яжіться з капітаном для узгодження деталей обміну."
         )
         
-        helpdesk_users = await users_collection.find({"role": "helpdesk"}).to_list(length=None)
+        helpdesk_users = await teams_collection.find({"role": "helpdesk"}).to_list(length=None)
         if not helpdesk_users:
             print("ПОПЕРЕДЖЕННЯ: Не знайдено жодного користувача HelpDesk для сповіщення.")
         
@@ -114,7 +114,7 @@ async def process_return_request(message: types.Message, state: FSMContext, bot:
         if message_id_to_delete:
             await bot.delete_message(chat_id=message.chat.id, message_id=message_id_to_delete)
 
-        user = await users_collection.find_one({"telegram_id": str(message.from_user.id)})
+        user = await teams_collection.find_one({"telegram_id": str(message.from_user.id)})
         if not user:
             return await message.answer("Помилка: не вдалося знайти ваші дані. Спробуйте перезайти.")
             
@@ -131,7 +131,7 @@ async def process_return_request(message: types.Message, state: FSMContext, bot:
             f"**Дія:** Зв'яжіться з капітаном, щоб оглянути товар та узгодити повернення."
         )
         
-        helpdesk_users = await users_collection.find({"role": "helpdesk"}).to_list(length=None)
+        helpdesk_users = await teams_collection.find({"role": "helpdesk"}).to_list(length=None)
         if not helpdesk_users:
             print("ПОПЕРЕДЖЕННЯ: Не знайдено жодного користувача HelpDesk для сповіщення.")
         

@@ -7,7 +7,7 @@ from bson.objectid import ObjectId
 from os import getenv
 
 # Імпортуємо всі необхідні колекції
-from bot.utils.td_dg import orders_collection, users_collection, products_collection
+from bot.utils.td_dg import orders_collection, teams_collection, products_collection
 from bot.keyboards.choices import get_helpdesk_menu_kb
 from bot.utils.sheetslogger import log_action
 
@@ -72,7 +72,7 @@ async def process_helpdesk_password(message: types.Message, state: FSMContext):
     if login == expected_login and password == expected_password:
         await state.clear()
         
-        await users_collection.update_one(
+        await teams_collection.update_one(
             {"telegram_id": str(message.from_user.id)},
             {"$set": {
                 "username": message.from_user.username,
@@ -182,7 +182,7 @@ async def process_rejection_reason(message: types.Message, state: FSMContext, bo
     # Повернення ресурсів
     for item in order['items']:
         await products_collection.update_one({"_id": item['product_id']}, {"$inc": {"stock_quantity": item['quantity']}})
-    await users_collection.update_many({"team_name": order['team_name']}, {"$inc": {"budget": order['total_cost']}})
+    await teams_collection.update_many({"team_name": order['team_name']}, {"$inc": {"budget": order['total_cost']}})
     
     await orders_collection.update_one({"_id": order_id}, {"$set": {"status": "rejected", "rejection_reason": reason}})
     
@@ -240,7 +240,7 @@ async def process_rejection_reason(message: types.Message, state: FSMContext, bo
         )
 
     # 2. Повертаємо купони команді
-    await users_collection.update_many(
+    await teams_collection.update_many(
         {"team_name": order['team_name']},
         {"$inc": {"budget": order['total_cost']}}
     )
@@ -265,14 +265,14 @@ async def process_rejection_reason(message: types.Message, state: FSMContext, bo
     await state.clear()
 
 
-@router.callback_query(F.data == "hd_general_history")
-async def show_general_history(callback: types.CallbackQuery):
-    await callback.answer("Цей функціонал в розробці.", show_alert=True)
+# @router.callback_query(F.data == "hd_general_history")
+# async def show_general_history(callback: types.CallbackQuery):
+#     await callback.answer("Цей функціонал в розробці.", show_alert=True)
 
-@router.callback_query(F.data == "hd_team_history")
-async def show_team_history(callback: types.CallbackQuery):
-    await callback.answer("Цей функціонал в розробці.", show_alert=True)
+# @router.callback_query(F.data == "hd_team_history")
+# async def show_team_history(callback: types.CallbackQuery):
+#     await callback.answer("Цей функціонал в розробці.", show_alert=True)
 
-@router.callback_query(F.data == "hd_stock_view")
-async def show_stock_view(callback: types.CallbackQuery):
-    await callback.answer("Цей функціонал в розробці.", show_alert=True)
+# @router.callback_query(F.data == "hd_stock_view")
+# async def show_stock_view(callback: types.CallbackQuery):
+#     await callback.answer("Цей функціонал в розробці.", show_alert=True)

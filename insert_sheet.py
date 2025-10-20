@@ -1,27 +1,22 @@
-# insert_data.py (оновлена версія)
-from pymongo import MongoClient
-from bson.objectid import ObjectId
+import gspread
+from oauth2client.service_account import ServiceAccountCredentials
+import datetime
+import asyncio
 
-client = MongoClient("mongodb://localhost:27017/")
-db = client.td
-
-# Використовуємо більш стандартні назви колекцій
-db.categories.drop()
-db.products.drop() # Перейменовано з items на products
+# --- Налаштування ---
+SCOPE = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
+CREDS_FILE = 'techshop-469612-8d17d1de7962.json'  # Шлях до вашого файлу credentials.json
+SPREADSHEET_TITLE = 'TD market products' # Назва вашої таблиці
+WORKSHEET_NAME = 'Аркуш1' # Назва аркуша (зазвичай 'Sheet1' або 'Аркуш1')
 
 def get_full_data():
-
+    """Повертає повний словник з даними про товари."""
     def calculate_allowed_to_buy(stock):
-        if stock < 8:
-            return 1
-        elif stock < 16:
-            return 2
-        elif stock < 32:
-            return 4
-        elif stock < 64:
-            return 6
-        else:
-            return 10
+        if stock < 8: return 1
+        elif stock < 16: return 2
+        elif stock < 32: return 4
+        elif stock < 64: return 6
+        else: return 10
 
     full_data = {
     "КРИТИЧНІ КОМПОНЕНТИ": {
@@ -30,8 +25,8 @@ def get_full_data():
             {"name": "ESP модуль (не esp-01)", "quantity_str": "1штx8к", "stock": 8, "base_price": 150, "coeff": 2.5, "price_coupons": 375},
             {"name": "Motor shield L298N", "quantity_str": "1штx8к", "stock": 8, "base_price": 80, "coeff": 2.0, "price_coupons": 160},
             {"name": "Радіомодулі BLE (HC-06)", "quantity_str": "1штx8к", "stock": 8, "base_price": 100, "coeff": 2.0, "price_coupons": 200},
-            # {"name": "Паяльні станції", "quantity_str": "4-8шт", "stock": 8, "base_price": 800, "coeff": 1.5, "price_coupons": 1200} 
-            ]},
+            # {"name": "Паяльні станції", "quantity_str": "4-8шт", "stock": 8, "base_price": 800, "coeff": 1.5, "price_coupons": 1200} ]},
+        ]},
     "ВАЖЛИВІ КОМПОНЕНТИ": {
         "restriction": "2-3 шт/команда перші 60 хв", "tier": 2, "items": [
             {"name": "Стабілізатори 5V (AMS1117)", "quantity_str": "2штx8к", "stock": 16, "base_price": 15, "coeff": 1.8, "price_coupons": 27},
@@ -82,45 +77,88 @@ def get_full_data():
             {"name": "Лінійка/штангенциркуль", "quantity_str": "1шт", "stock": 1, "base_price": 30, "coeff": 1.2, "price_coupons": 36} ]}
     }
 
-    # Add allowed_to_buy to each item
+    # Додаємо 'allowed_to_buy' до кожного товару
     for category in full_data.values():
         for item in category["items"]:
             item["allowed_to_buy"] = calculate_allowed_to_buy(item["stock"])
 
     return full_data
 
-data = get_full_data()
-category_ids = {}
-for category_name, category_info in data.items():
-    category_doc = {
-        "name": category_name,
-        "tier": category_info["tier"],
-        "restriction": category_info["restriction"]
-    }
-    inserted_category = db.categories.insert_one(category_doc)
-    category_ids[category_name] = inserted_category.inserted_id
-    print(f"Inserted category: {category_name} with ID: {inserted_category.inserted_id}")
+def update_spreadsheet():
+    """Основна функція для оновлення Google таблиці."""
+    try:
+        # Авторизація
+        creds = ServiceAccountCredentials.from_json_keyfile_name(CREDS_FILE, SCOPE)
+        client = gspread.authorize(creds)
+        
+        # Відкриття таблиці та аркуша
+        spreadsheet = client.open(SPREADSHEET_TITLE)
+        worksheet = spreadsheet.worksheet(WORKSHEET_NAME)
+        print(f"Успішно підключено до таблиці '{SPREADSHEET_TITLE}' та аркуша '{WORKSHEET_NAME}'.")
 
-for category_name, category_info in data.items():
-    category_id = category_ids[category_name]
-    items_to_insert = []
-    for item in category_info["items"]:
-        product_doc = {
-            "name": item["name"],
-            "description": f"Tier {category_info['tier']}", # Додамо опис для наглядності
-            "quantity_description": item["quantity_str"],
-            "stock_quantity": item["stock"],
-            "allowed_to_buy": item["allowed_to_buy"],
-            "base_price_uah": item["base_price"],
-            "coefficient": item["coeff"],
-            "price_coupons": item["price_coupons"],
-            "category_id": category_id
-        }
-        items_to_insert.append(product_doc)
-    
-    if items_to_insert:
-        db.products.insert_many(items_to_insert) # Зберігаємо в колекцію products
-        print(f"Inserted {len(items_to_insert)} items for category: {category_name}")
+        # Отримання та форматування даних
+        data = get_full_data()
+        
+        # Підготовка даних для запису
+        rows_to_upload = []
+        
+        # Заголовки колонок
+        headers = [
+            "Категорія", "Назва товару", "Обмеження", "Рівень", 
+            "Кількість (текст)", "На складі", "Базова ціна", 
+            "Коефіцієнт", "Ціна в купонах", "Дозволено купити"
+        ]
+        rows_to_upload.append(headers)
 
-print("\nДані успішно вставлені в MongoDB!")
-client.close()
+        # Перетворення даних у формат для таблиці
+        for category_name, category_data in data.items():
+            # Додаємо рядок з назвою категорії як роздільник
+            # Ми об'єднуємо комірки для цього рядка пізніше
+            rows_to_upload.append([category_name.upper()]) 
+            
+            for item in category_data['items']:
+                row = [
+                    "", # Пуста комірка для категорії, бо вона вже є в рядку-роздільнику
+                    item.get("name", ""),
+                    category_data.get("restriction", ""),
+                    category_data.get("tier", ""),
+                    item.get("quantity_str", ""),
+                    item.get("stock", ""),
+                    item.get("base_price", ""),
+                    item.get("coeff", ""),
+                    item.get("price_coupons", ""),
+                    item.get("allowed_to_buy", "")
+                ]
+                rows_to_upload.append(row)
+        
+        # Очищення аркуша перед записом нових даних
+        print("Очищення аркуша...")
+        worksheet.clear()
+        
+        # Запис всіх даних одним запитом
+        print("Завантаження даних до таблиці...")
+        worksheet.update('A1', rows_to_upload)
+        
+        # --- Опціонально: форматування ---
+        # Об'єднання комірок для назв категорій
+        print("Форматування таблиці...")
+        current_row_index = 2 # Починаємо з другого рядка (після заголовків)
+        for category_name in data.keys():
+            worksheet.merge_cells(f'A{current_row_index}:J{current_row_index}')
+            current_row_index += len(data[category_name]['items']) + 1 # +1 для самого рядка категорії
+        
+        print("\nГотово! Таблицю успішно оновлено.")
+
+    except gspread.exceptions.SpreadsheetNotFound:
+        print(f"ПОМИЛКА: Таблицю з назвою '{SPREADSHEET_TITLE}' не знайдено.")
+        print("Перевірте, чи правильно вказана назва, та чи надали ви доступ сервісному акаунту.")
+    except gspread.exceptions.WorksheetNotFound:
+        print(f"ПОМИЛКА: Аркуш з назвою '{WORKSHEET_NAME}' не знайдено в таблиці '{SPREADSHEET_TITLE}'.")
+    except FileNotFoundError:
+        print(f"ПОМИЛКА: Файл '{CREDS_FILE}' не знайдено. Переконайтесь, що він знаходиться у тій самій папці, що і скрипт.")
+    except Exception as e:
+        print(f"Сталася невідома помилка: {e}")
+
+# --- Запуск скрипта ---
+if __name__ == "__main__":
+    update_spreadsheet()

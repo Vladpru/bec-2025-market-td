@@ -213,3 +213,10 @@ async def is_team_password_correct(team_name: str, password: str) -> bool:
 async def is_team_exist_password(team_name: str, password: str) -> bool:
     team = await teams_collection.find_one({"team_name": team_name, "password": password})
     return team is not None
+
+async def check_team_category(team_name: str) -> str:
+    team = await teams_collection.find_one({"team_name": team_name})
+    if team.get("category") == "Innovative Design":
+        return "Innovative Design"
+    else:
+        return "Team Design"

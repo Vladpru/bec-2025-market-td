@@ -9,7 +9,7 @@ from aiogram.types import ReplyKeyboardRemove, FSInputFile, InlineKeyboardMarkup
 from bson.objectid import ObjectId
 
 from bot.utils.td_dg import (
-    products_collection, users_collection, orders_collection, is_team_exist, is_team_password_correct
+    products_collection, teams_collection, orders_collection, is_team_exist, is_team_password_correct
 )
 from bot.utils.sheetslogger import log_action 
 
@@ -21,7 +21,6 @@ class CaptainActions(StatesGroup):
 router = Router()
 
 async def view_shop_page(message_or_callback, state: FSMContext, page: int):
-    """Основна функція для відображення сторінки магазину (ОНОВЛЕНА)."""
     if isinstance(message_or_callback, types.CallbackQuery):
         message = message_or_callback.message
     else:
@@ -43,16 +42,10 @@ async def view_shop_page(message_or_callback, state: FSMContext, page: int):
     products = await products_collection.find(db_filter).skip(skip).limit(ITEMS_PER_PAGE).to_list(length=ITEMS_PER_PAGE)
     total_items = await products_collection.count_documents(db_filter)
     
-    user = await users_collection.find_one({"telegram_id": str(message_or_callback.from_user.id)})
+    user = await teams_collection.find_one({"telegram_id": str(message_or_callback.from_user.id)})
     
-    # --- КЛЮЧОВА ЗМІНА ТУТ ---
-    # Додаємо баланс та час оновлення в текст повідомлення.
-    # Це гарантує, що текст ЗАВЖДИ буде унікальним при кожному оновленні.
     timestamp = datetime.datetime.now(timezone.utc).strftime('%H:%M:%S UTC')
-    text = (f"🛍️ **Магазин** (Фаза: *{PHASE_NAMES[current_phase]}*)\n"
-            f"💰 **Ваш баланс:** {user['budget']} купонів\n"
-            f"🕒 Оновлено: {timestamp}\n\n")
-    # --- КІНЕЦЬ ЗМІНИ ---
+    text = (f"🛍️ **Магазин** (Фаза: *{PHASE_NAMES[current_phase]}*)\n")
 
     if not config['is_open']:
         text += "🔴 **УВАГА: Магазин наразі зачинено!**\n\n"
@@ -61,15 +54,21 @@ async def view_shop_page(message_or_callback, state: FSMContext, page: int):
 
     keyboard_rows = []
     if products:
-        for p in products:
-            text += (f"🔹 **{p['name']}**\n"
-                     f"   Ціна: {p['price_coupons']} купонів (Доступно: {p['stock_quantity']} шт.)\n\n")
-            if config['is_open'] and current_phase > 0:
-                keyboard_rows.append([InlineKeyboardButton(text=f"➕ Додати '{p['name']}'", callback_data=f"addtocart_{p['_id']}")])
+       for p in products:
+           stock_info = f"(На складі: {p['stock_quantity']} шт.)"
+           
+           if current_phase == 2:
+               allowed = p.get("allowed_to_buy")
+               if allowed is not None:
+                   stock_info = f"(На складі: {p['stock_quantity']} шт. | Можна купити: {allowed} шт.)"
+           text += (f"🔹 **{p['name']}**\n"
+                    f"   Ціна: {p['price_coupons']} купонів {stock_info}\n\n")
+                    
+           if config['is_open'] and current_phase > 0:
+               keyboard_rows.append([InlineKeyboardButton(text=f"➕ Додати '{p['name']}'", callback_data=f"addtocart_{p['_id']}")])
     else:
         text += "Товарів немає."
 
-    # ... (решта коду для кнопок навігації залишається без змін) ...
     nav_buttons = []
     if page > 1:
         nav_buttons.append(InlineKeyboardButton(text="⬅️ Попередня", callback_data=f"shoppage_{page-1}"))
@@ -122,7 +121,6 @@ async def add_to_cart_quantity(message: types.Message, state: FSMContext):
     data = await state.get_data()
     product_id = ObjectId(data.get("product_to_add"))
     
-    # ВИПРАВЛЕНО: Викликаємо просту перевірку тільки для товару
     is_allowed, reason = await check_item_rules(product_id, quantity)
     if not is_allowed:
         return await message.answer(f"❌ **Помилка:** {reason}\n\nВведіть іншу кількість або поверніться в магазин.")
@@ -149,7 +147,7 @@ async def view_cart(callback: types.CallbackQuery, state: FSMContext):
     if not cart:
         return await callback.answer("🛒 Ваш кошик порожній!", show_alert=True)
     
-    user = await users_collection.find_one({"telegram_id": str(callback.from_user.id)})
+    user = await teams_collection.find_one({"telegram_id": str(callback.from_user.id)})
     
     total_cost = 0
     cart_text = "🛒 **Ваш кошик:**\n\n"
@@ -186,7 +184,7 @@ async def place_order(callback: types.CallbackQuery, state: FSMContext, bot: Bot
     await callback.message.edit_text("Замовлення обробляється, будь ласка, зачекайте...")
     data = await state.get_data()
     cart = data.get("cart", {})
-    user = await users_collection.find_one({"telegram_id": str(callback.from_user.id)})
+    user = await teams_collection.find_one({"telegram_id": str(callback.from_user.id)})
     team_name = user['team_name']
     
     # 1. Спочатку перевіряємо глобальне правило інтервалу для всього замовлення
@@ -234,7 +232,7 @@ async def place_order(callback: types.CallbackQuery, state: FSMContext, bot: Bot
         for item in items_for_order:
             await products_collection.update_one({"_id": item['product_id']}, {"$inc": {"stock_quantity": -item['quantity']}})
         
-        await users_collection.update_many({"team_name": team_name}, {"$inc": {"budget": -total_cost}})
+        await teams_collection.update_many({"team_name": team_name}, {"$inc": {"budget": -total_cost}})
         
         last_order_number = await orders_collection.count_documents({})
         order_doc = {
@@ -246,7 +244,7 @@ async def place_order(callback: types.CallbackQuery, state: FSMContext, bot: Bot
         }
 
         try:
-            helpdesk_chat_id = await users_collection.find({"role": "helpdesk"}).distinct("telegram_id")
+            helpdesk_chat_id = await teams_collection.find({"role": "helpdesk"}).distinct("telegram_id")
             if helpdesk_chat_id:
                 for helpdesk_id in helpdesk_chat_id:
                     helpdesk_chat_id = int(helpdesk_id)

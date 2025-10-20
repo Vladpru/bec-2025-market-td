@@ -1,7 +1,7 @@
 # bot/handlers/admin/analytics_handlers.py
 from aiogram import Router, types, F
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
-from bot.utils.td_dg import orders_collection, users_collection, products_collection
+from bot.utils.td_dg import orders_collection, teams_collection, products_collection
 
 router = Router()
 
@@ -47,7 +47,7 @@ async def show_avg_spent(callback: types.CallbackQuery):
     Оновлена функція, яка рахує кількість унікальних команд з колекції 'users'.
     """
     # ВИПРАВЛЕНО: отримуємо список унікальних назв команд
-    unique_teams_list = await users_collection.distinct("team_name")
+    unique_teams_list = await teams_collection.distinct("team_name")
     total_teams = len(unique_teams_list)
 
     if total_teams == 0:

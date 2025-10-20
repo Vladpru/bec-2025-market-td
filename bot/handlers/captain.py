@@ -9,12 +9,13 @@ from bson.objectid import ObjectId
 from bot.keyboards.registration import hello_menu_kb
 from bot.utils.shop_logic import STATUS_EMOJI
 from bot.utils.td_dg import (
-    products_collection, users_collection, orders_collection, is_team_password_correct
+    products_collection, teams_collection, orders_collection, is_team_password_correct
 )
-from bot.utils.database import is_team_exist_password, is_team_exist
+from bot.utils.database import check_team_category, is_team_exist_password, is_team_exist
 from bot.utils.sheetslogger import log_action 
 from bot.keyboards.choices import captain_menu_kb
 from bot.handlers.captain_shop import CaptainActions
+from aiogram.types import FSInputFile
 
 router = Router()
 
@@ -29,7 +30,6 @@ async def captain_login_start(message: types.Message, state: FSMContext):
     await message.answer("Введіть назву команди:", reply_markup=ReplyKeyboardRemove())
 
 INITIAL_BUDGET = 1500
-
 @router.message(CaptainLogin.team_name)
 async def process_team_name(message: types.Message, state: FSMContext):
     """
@@ -46,7 +46,8 @@ async def process_team_name(message: types.Message, state: FSMContext):
         await message.answer(f"Команда '{team_name}' існує. Введіть пароль для входу:")
     else:
         await state.clear()
-        await message.answer(f"Команда '{team_name}' не знайдена. Повертаємо вас до головного меню.", reply_markup=hello_menu_kb)
+        # ВИПРАВЛЕНО: Додано дужки () до hello_menu_kb
+        await message.answer(f"Команда '{team_name}' не знайдена. Повертаємо вас до головного меню.", reply_markup=hello_menu_kb())
 
 @router.message(CaptainLogin.password)
 async def process_password(message: types.Message, state: FSMContext):
@@ -54,38 +55,44 @@ async def process_password(message: types.Message, state: FSMContext):
     user_data = await state.get_data()
     team_name = user_data.get("team_name")
 
-    # Знову перевіряємо, чи існує команда, щоб зрозуміти, в якому ми сценарії
-    existing_team = await users_collection.find_one({"team_name": team_name})
-
+    if await check_team_category(team_name) == "Innovative Design":
+        # Тут вже було правильно, залишаємо як є
+        await message.answer("⚠️ Увага! Ваша команда зареєстрована в категорії 'Innovative Design'. Ви не зможете замовляти матеріали через цей бот. Будь ласка, зверніться до організаторів для отримання додаткової інформації.", reply_markup=hello_menu_kb())
+        await state.clear()
+        return
+    
     if await is_team_exist_password(team_name, password):
-        # Перевіряємо, чи існує запис для цього користувача
-        existing_user = await users_collection.find_one({"telegram_id": str(message.from_user.id)})
+        # Перевіряємо, чи існує запис капітана для цієї команди
+        existing_captain = await teams_collection.find_one({"team_name": team_name, "role": "captain"})
 
-        if existing_user:
-            # Якщо запис існує, оновлюємо його
-            await users_collection.update_one(
-            {"telegram_id": str(message.from_user.id)},
-            {"$set": {
-                "team_name": team_name,
-                "username": message.from_user.username,
-                "role": "captain"
-            }}
-            )
-        else:
+        if existing_captain and str(existing_captain.get("telegram_id")) != str(message.from_user.id):
+            # ВИПРАВЛЕНО: Додано дужки () до hello_menu_kb
+            await message.answer("У цій команді капітан вже зареєстрований. Повертаємо вас до головного меню.", reply_markup=hello_menu_kb())
+            await state.clear()
+            return
+        
+        # Перевіряємо, чи існує запис для цього користувача
+        existing_user = await teams_collection.find_one({"telegram_id": str(message.from_user.id)})
+
+        if not existing_user:
             # Якщо запису немає, створюємо новий
-            await users_collection.insert_one({
-            "telegram_id": str(message.from_user.id),
-            "username": message.from_user.username,
-            "team_name": team_name,
-            "role": "captain",
-            "budget": INITIAL_BUDGET  # Додаємо початковий бюджет
+            await teams_collection.insert_one({
+                "telegram_id": str(message.from_user.id),
+                "username": message.from_user.username,
+                "team_name": team_name,
+                "role": "captain",
+                "budget": INITIAL_BUDGET  # Додаємо початковий бюджет
             })
 
         await state.clear()
+        # Відправляємо PDF файл разом із повідомленням
+        pdf_file = FSInputFile("Інструкція Капітана.pdf")
+
         await message.answer(f"✅ Вхід успішний! Вітаємо, командире {team_name}!", reply_markup=captain_menu_kb)
+        await message.answer_document(pdf_file, caption="Інструкція для капітанів.")
     else:
         await message.answer(f"Неправильний пароль. Спробуйте ще раз: ")
-
+        
 # --- ГОЛОВНЕ МЕНЮ ---
 @router.callback_query(F.data == "captain_main_menu")
 async def back_to_main_menu(callback: types.CallbackQuery):
@@ -95,7 +102,7 @@ async def back_to_main_menu(callback: types.CallbackQuery):
 @router.callback_query(F.data == "captain_coupons")
 async def show_coupons(callback: types.CallbackQuery):
     # ВИПРАВЛЕНО: Беремо дані прямо з документа користувача, а не з teams_collection
-    user = await users_collection.find_one({"telegram_id": str(callback.from_user.id)})
+    user = await teams_collection.find_one({"telegram_id": str(callback.from_user.id)})
     if not user:
         await callback.answer("Помилка: не вдалося знайти ваші дані. Спробуйте перезайти.", show_alert=True)
         return
@@ -106,7 +113,7 @@ async def show_coupons(callback: types.CallbackQuery):
 # --- МОЇ МАТЕРІАЛИ ---
 @router.callback_query(F.data == "captain_materials")
 async def show_materials(callback: types.CallbackQuery):
-    user = await users_collection.find_one({"telegram_id": str(callback.from_user.id)})
+    user = await teams_collection.find_one({"telegram_id": str(callback.from_user.id)})
     if not user: return # Додаткова перевірка
 
     # ВИПРАВЛЕНО: Шукаємо замовлення по назві команди з документа користувача
@@ -126,7 +133,7 @@ async def show_materials(callback: types.CallbackQuery):
 
 @router.callback_query(F.data == "captain_orders")
 async def show_orders_history(callback: types.CallbackQuery):
-    user = await users_collection.find_one({"telegram_id": str(callback.from_user.id)})
+    user = await teams_collection.find_one({"telegram_id": str(callback.from_user.id)})
     if not user:
         return await callback.answer("Помилка: не вдалося знайти ваші дані.", show_alert=True)
 
@@ -181,7 +188,7 @@ async def confirm_receipt(callback: types.CallbackQuery, state: FSMContext):
 
     await callback.message.edit_text(f"✅ Дякуємо за підтвердження отримання замовлення №{updated_order['order_number']}!")
     
-    user = await users_collection.find_one({"telegram_id": str(callback.from_user.id)})
+    user = await teams_collection.find_one({"telegram_id": str(callback.from_user.id)})
     await log_action(
         action="Order Receipt Confirmed",
         user_id=callback.from_user.id,

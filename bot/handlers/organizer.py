@@ -9,7 +9,7 @@ from os import getenv
 from bson.objectid import ObjectId # Важливо для роботи з ID з MongoDB
 
 # Імпортуємо всі необхідні колекції
-from bot.utils.td_dg import products_collection, config_collection, users_collection, orders_collection
+from bot.utils.td_dg import products_collection, config_collection, teams_collection, orders_collection
 
 router = Router()
 
@@ -308,7 +308,8 @@ async def view_items(callback: types.CallbackQuery):
                           f"- Опис: {p.get('description')}\n---\n")
     await callback.message.edit_text(response_text, reply_markup=get_manage_items_kb(), parse_mode="Markdown")
 
-# --- БЛОК 2: ІНШІ ФУНКЦІЇ (ПЕРЕРАХУНОК ЦІН, КЕРУВАННЯ ФАЗАМИ, ЛІМІТИ) ---
+
+# --- ПЕРЕРАХУВАННЯ ЦІН ---
 
 async def update_all_prices():
     """
@@ -316,7 +317,7 @@ async def update_all_prices():
     Повертає кількість оновлених товарів.
     """
     all_products = await products_collection.find({}).to_list(length=None)
-    unique_teams_list = await users_collection.distinct("team_name")
+    unique_teams_list = await teams_collection.distinct("team_name")
     total_teams = len(unique_teams_list)
     updated_count = 0
 

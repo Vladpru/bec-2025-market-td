@@ -15,14 +15,15 @@ def get_helpdesk_menu_kb() -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text="📝 Активні замовлення", callback_data="hd_active_orders")],
         [InlineKeyboardButton(text="📜 Історія замовлень загальна", callback_data="hd_general_history")],
         [InlineKeyboardButton(text="👥 Історія замовлень по командах", callback_data="hd_team_history")],
-        [InlineKeyboardButton(text="🛍️ Перегляд залишків (Магазин)", callback_data="hd_stock_view")]
+        [InlineKeyboardButton(text="🛍️ Перегляд залишків (Магазин)", callback_data="hd_stock_view")],
+        [InlineKeyboardButton(text="✏️ Змінити бюджет команди", callback_data="hd_change_team_budget")]
     ])
     return keyboard
 
 def get_admin_menu_kb() -> InlineKeyboardMarkup:
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="⚙️ Керування товарами", callback_data="admin_manage_items")],
-        [InlineKeyboardButton(text="⏱️ Встановлення обмежень", callback_data="admin_set_limits")],
+        # [InlineKeyboardButton(text="⏱️ Встановлення обмежень", callback_data="admin_set_limits")],
         [InlineKeyboardButton(text="📊 Перегляд аналітики", callback_data="admin_view_analytics")],
         [InlineKeyboardButton(text="⏳ Керування фазами гри", callback_data="admin_set_phase")],
         # [InlineKeyboardButton(text="🔄 Перерахувати ціни (динаміка)", callback_data="admin_recalculate_prices")],

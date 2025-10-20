@@ -51,7 +51,7 @@ def get_full_data():
             {"name": "Лазер 5mW", "quantity_str": "1штx8к", "stock": 8, "base_price": 25, "coeff": 1.3, "price_coupons": 33} ]},
     "ВИТРАТНІ МАТЕРІАЛИ": {
         "restriction": "Без обмежень, але швидко закінчуються", "tier": 4, "items": [
-            {"name": "Спермоклей (4 стіки)", "quantity_str": "4штx8к", "stock": 32, "base_price": 20, "coeff": 1.4, "price_coupons": 28},
+            {"name": "Термоклей (4 стіки)", "quantity_str": "4штx8к", "stock": 32, "base_price": 20, "coeff": 1.4, "price_coupons": 28},
             {"name": "Припій (20-30гр)", "quantity_str": "30грx8к", "stock": 8, "base_price": 30, "coeff": 1.3, "price_coupons": 39},
             {"name": "Каніфоль", "quantity_str": "4шт", "stock": 4, "base_price": 15, "coeff": 1.3, "price_coupons": 20},
             {"name": "Флюс (шприц)", "quantity_str": "1шт", "stock": 1, "base_price": 25, "coeff": 1.3, "price_coupons": 33},

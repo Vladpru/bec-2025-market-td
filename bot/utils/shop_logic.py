@@ -32,41 +32,34 @@ async def get_shop_config():
         "purchase_interval_minutes": limits.get("purchase_interval_minutes", 5) 
     }
 
+from bot.utils.td_dg import orders_collection # Переконайтесь, що імпорт є
+from datetime import datetime, timedelta, timezone
 
-async def check_order_cooldown(team_name: str) -> tuple[bool, str]:
+async def check_order_cooldown(team_name: str):
     """
-    Перевіряє ТІЛЬКИ інтервал між замовленнями для команди.
-    ВИПРАВЛЕНО: Коректно працює з часовими зонами (UTC).
+    Перевіряє, чи минув інтервал у 10 хвилин з моменту ОСТАННЬОГО УСПІШНОГО замовлення.
+    Скасовані замовлення ігноруються.
     """
-    config = await get_shop_config()
-    interval_minutes = config["purchase_interval_minutes"]
-    
-    last_order = await orders_collection.find_one({"team_name": team_name}, sort=[("created_at", -1)])
-    
-    if last_order:
-        last_order_time = last_order["created_at"]
-        
-        # --- ОСНОВНЕ ВИПРАВЛЕННЯ ---
-        # Використовуємо "свідомий" час UTC, щоб уникнути конфлікту часових зон.
-        current_time = datetime.datetime.now(timezone.utc)
-        # --- КІНЕЦЬ ВИПРАВЛЕННЯ ---
+    shop_config = await config_collection.find_one({"_id": "shop_limits"}) or {}
+    ORDER_INTERVAL_MINUTES = shop_config.get("purchase_interval_minutes", 4)
 
-        time_passed = current_time - last_order_time
-        required_interval = datetime.timedelta(minutes=interval_minutes)
+    # Шукаємо останнє замовлення зі статусом 'completed'
+    last_completed_order = await orders_collection.find_one(
+        {"team_name": team_name, "status": "completed"},
+        sort=[("created_at", -1)]
+    )
+
+    if not last_completed_order:
+        return True, "Дозволено, успішних замовлень ще не було."
+
+    time_since_last_order = datetime.now(timezone.utc) - last_completed_order['created_at']
+    
+    if time_since_last_order < timedelta(minutes=ORDER_INTERVAL_MINUTES):
+        remaining_time = timedelta(minutes=ORDER_INTERVAL_MINUTES) - time_since_last_order
+        minutes, seconds = divmod(int(remaining_time.total_seconds()), 60)
+        return False, f"Ви зможете зробити наступне замовлення через {minutes} хв {seconds} сек."
         
-        if time_passed < required_interval:
-            time_to_wait = required_interval - time_passed
-            remaining_seconds = time_to_wait.total_seconds()
-            
-            # Покращений вивід часу для користувача
-            if remaining_seconds > 60:
-                remaining_minutes = int(remaining_seconds // 60)
-                remaining_sec_part = int(remaining_seconds % 60)
-                return False, f"Занадто часті покупки. Зачекайте"
-            else:
-                return False, f"Занадто часті покупки. Зачекайте"
-            
-    return True, "OK"
+    return True, "Дозволено."
 
 async def check_item_rules(product_id, quantity: int) -> tuple[bool, str]:
     config = await get_shop_config()

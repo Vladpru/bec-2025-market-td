@@ -1,13 +1,13 @@
 from motor.motor_asyncio import AsyncIOMotorClient
-from config import load_config_td
+from config import load_config
 from aiogram.exceptions import TelegramForbiddenError
 import asyncio 
 
-config = load_config_td()
+config = load_config()
 
 
 client = AsyncIOMotorClient(config.mongo_uri, tz_aware=True)
-db = client["td"]  
+db = client["bec-2025-bot-td"]  
 
 teams_collection = db["teams"]
 products_collection = db["products"]

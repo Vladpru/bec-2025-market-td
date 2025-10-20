@@ -1,27 +1,17 @@
-# insert_data.py (оновлена версія)
+
 from pymongo import MongoClient
+from pymongo.errors import ConnectionFailure
 from bson.objectid import ObjectId
-
-client = MongoClient("mongodb://localhost:27017/")
-db = client.td
-
-# Використовуємо більш стандартні назви колекцій
-db.categories.drop()
-db.products.drop() # Перейменовано з items на products
+from config import load_config
 
 def get_full_data():
-
+    # ... Ваша функція get_full_data залишається без змін ...
     def calculate_allowed_to_buy(stock):
-        if stock < 8:
-            return 1
-        elif stock < 16:
-            return 2
-        elif stock < 32:
-            return 4
-        elif stock < 64:
-            return 6
-        else:
-            return 10
+        if stock < 8: return 1
+        elif stock < 16: return 2
+        elif stock < 32: return 4
+        elif stock < 64: return 6
+        else: return 10
 
     full_data = {
     "КРИТИЧНІ КОМПОНЕНТИ": {
@@ -30,7 +20,6 @@ def get_full_data():
             {"name": "ESP модуль (не esp-01)", "quantity_str": "1штx8к", "stock": 8, "base_price": 150, "coeff": 2.5, "price_coupons": 375},
             {"name": "Motor shield L298N", "quantity_str": "1штx8к", "stock": 8, "base_price": 80, "coeff": 2.0, "price_coupons": 160},
             {"name": "Радіомодулі BLE (HC-06)", "quantity_str": "1штx8к", "stock": 8, "base_price": 100, "coeff": 2.0, "price_coupons": 200},
-            # {"name": "Паяльні станції", "quantity_str": "4-8шт", "stock": 8, "base_price": 800, "coeff": 1.5, "price_coupons": 1200} 
             ]},
     "ВАЖЛИВІ КОМПОНЕНТИ": {
         "restriction": "2-3 шт/команда перші 60 хв", "tier": 2, "items": [
@@ -56,7 +45,7 @@ def get_full_data():
             {"name": "Лазер 5mW", "quantity_str": "1штx8к", "stock": 8, "base_price": 25, "coeff": 1.3, "price_coupons": 33} ]},
     "ВИТРАТНІ МАТЕРІАЛИ": {
         "restriction": "Без обмежень, але швидко закінчуються", "tier": 4, "items": [
-            {"name": "Спермоклей (4 стіки)", "quantity_str": "4штx8к", "stock": 32, "base_price": 20, "coeff": 1.4, "price_coupons": 28},
+            {"name": "Термоклей (4 стіки)", "quantity_str": "4штx8к", "stock": 32, "base_price": 20, "coeff": 1.4, "price_coupons": 28},
             {"name": "Припій (20-30гр)", "quantity_str": "30грx8к", "stock": 8, "base_price": 30, "coeff": 1.3, "price_coupons": 39},
             {"name": "Каніфоль", "quantity_str": "4шт", "stock": 4, "base_price": 15, "coeff": 1.3, "price_coupons": 20},
             {"name": "Флюс (шприц)", "quantity_str": "1шт", "stock": 1, "base_price": 25, "coeff": 1.3, "price_coupons": 33},
@@ -81,46 +70,78 @@ def get_full_data():
             {"name": "Ніж канцелярський", "quantity_str": "4шт", "stock": 4, "base_price": 15, "coeff": 1.2, "price_coupons": 18},
             {"name": "Лінійка/штангенциркуль", "quantity_str": "1шт", "stock": 1, "base_price": 30, "coeff": 1.2, "price_coupons": 36} ]}
     }
-
-    # Add allowed_to_buy to each item
     for category in full_data.values():
         for item in category["items"]:
             item["allowed_to_buy"] = calculate_allowed_to_buy(item["stock"])
-
     return full_data
+
+# --- ОСНОВНИЙ БЛОК СКРИПТУ ---
+config = load_config()
+client = None 
+
+try:
+    print(f"Спроба підключення до: {config.mongo_uri}") # <-- ДІАГНОСТИКА 1
+    client = MongoClient(config.mongo_uri, tz_aware=True, serverSelectionTimeoutMS=5000)
+    client.admin.command('ping')
+    print("✅ Підключення до MongoDB успішне!")
+except ConnectionFailure as e:
+    print(f"❌ Помилка підключення до MongoDB: {e}")
+    exit()
+
+db = client["bec-2025-bot-td"]
+print("\nОчищення старих колекцій...")
+db.categories.drop()
+db.products.drop()
+print("Старі колекції 'categories' та 'products' видалено.")
 
 data = get_full_data()
 category_ids = {}
+
+print("\nВставка нових даних...")
 for category_name, category_info in data.items():
-    category_doc = {
-        "name": category_name,
-        "tier": category_info["tier"],
-        "restriction": category_info["restriction"]
-    }
+    category_doc = {"name": category_name, "tier": category_info["tier"], "restriction": category_info["restriction"]}
     inserted_category = db.categories.insert_one(category_doc)
     category_ids[category_name] = inserted_category.inserted_id
-    print(f"Inserted category: {category_name} with ID: {inserted_category.inserted_id}")
+    print(f"  -> Вставлено категорію: '{category_name}'")
 
 for category_name, category_info in data.items():
     category_id = category_ids[category_name]
     items_to_insert = []
     for item in category_info["items"]:
         product_doc = {
-            "name": item["name"],
-            "description": f"Tier {category_info['tier']}", # Додамо опис для наглядності
-            "quantity_description": item["quantity_str"],
-            "stock_quantity": item["stock"],
-            "allowed_to_buy": item["allowed_to_buy"],
-            "base_price_uah": item["base_price"],
-            "coefficient": item["coeff"],
-            "price_coupons": item["price_coupons"],
+            "name": item["name"], "description": f"Tier {category_info['tier']}",
+            "quantity_description": item["quantity_str"], "stock_quantity": item["stock"],
+            "allowed_to_buy": item["allowed_to_buy"], "base_price": item["base_price"],
+            "coefficient": item["coeff"], "price_coupons": item["price_coupons"],
             "category_id": category_id
         }
         items_to_insert.append(product_doc)
     
     if items_to_insert:
-        db.products.insert_many(items_to_insert) # Зберігаємо в колекцію products
-        print(f"Inserted {len(items_to_insert)} items for category: {category_name}")
+        try:
+            result = db.products.insert_many(items_to_insert)
+            # <-- ДІАГНОСТИКА 2: Використовуємо результат операції для логування
+            print(f"  -> Вставлено {len(result.inserted_ids)} товарів для категорії: '{category_name}'")
+        except Exception as e:
+            print(f"  -> !!! Помилка вставки для '{category_name}': {e}")
 
-print("\nДані успішно вставлені в MongoDB!")
-client.close()
+
+# --- ДІАГНОСТИКА 3: ФІНАЛЬНА ПЕРЕВІРКА ---
+print("\n--- Фінальна перевірка ---")
+try:
+    category_count = db.categories.count_documents({})
+    product_count = db.products.count_documents({})
+    print(f"Знайдено документів в 'categories': {category_count}")
+    print(f"Знайдено документів в 'products': {product_count}")
+
+    if product_count > 0:
+        print("✅ Дані успішно збережені та перевірені в базі даних.")
+    else:
+        print("⚠️ УВАГА: Колекція 'products' порожня. Перевірте URI підключення та права доступу.")
+except Exception as e:
+    print(f"❌ Помилка під час фінальної перевірки: {e}")
+
+
+if client:
+    client.close()
+    print("\nЗ'єднання з MongoDB закрито.")

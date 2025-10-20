@@ -85,7 +85,7 @@ async def show_general_history_page(callback: types.CallbackQuery):
 
     text = "📜 **Загальна історія замовлень:**\n\n---\n"
     for order in all_orders:
-        date_str = order.get('created_at').strftime('%d.%m %H:%M')
+        date_str = (order.get('created_at') + datetime.timedelta(hours=3)).strftime('%d.%m %H:%M')
         status_text = STATUS_EMOJI.get(order.get('status'), 'Невідомо')
         text += (f"**№{order['order_number']}** ({date_str}) - **{order['team_name']}**\n"
                  f"Статус: {status_text}, Сума: {order['total_cost']}\n---\n")
@@ -136,7 +136,7 @@ async def show_team_history_page(callback: types.CallbackQuery):
 
     text = f"📜 **Історія замовлень команди {team_name}:**\n\n"
     for order in team_orders:
-        date_str = order.get('created_at').strftime('%d.%m.%Y %H:%M')
+        date_str = (order.get('created_at') + datetime.timedelta(hours=3)).strftime('%d.%m %H:%M')
         status_text = STATUS_EMOJI.get(order.get('status'), 'Невідомо')
         text += (f"**№{order['order_number']}** ({date_str}) - Статус: {status_text}\n"
                  f"Сума: {order['total_cost']} купонів\nСклад:\n")

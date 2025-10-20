@@ -3,9 +3,10 @@ from aiogram import Router, types, F, Bot
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import ReplyKeyboardRemove, InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.utils.keyboard import InlineKeyboardBuilder
 from bson.objectid import ObjectId
 from os import getenv
-
+from bot.keyboards.choices import captain_menu_kb
 # Імпортуємо всі необхідні колекції
 from bot.utils.td_dg import orders_collection, teams_collection, products_collection
 from bot.keyboards.choices import get_helpdesk_menu_kb
@@ -14,6 +15,10 @@ from bot.utils.sheetslogger import log_action
 router = Router()
 
 # --- Стани (FSM) ---
+class ChangeBudget(StatesGroup):
+    waiting_for_new_budget = State()
+    team_to_edit = State()
+
 class HelpDeskLogin(StatesGroup):
     waiting_for_login = State()
     waiting_for_password = State()
@@ -133,7 +138,7 @@ async def show_active_orders(callback: types.CallbackQuery):
 
         await callback.message.answer(order_text, reply_markup=InlineKeyboardMarkup(inline_keyboard=[buttons]), parse_mode="Markdown")
         
-    await callback.message.answer("---", reply_markup=get_helpdesk_menu_kb()) # Повертаємо головне меню в кінці
+    # await callback.message.answer("---", reply_markup=get_helpdesk_menu_kb()) # Повертаємо головне меню в кінці
     await callback.answer()
 
 # --- ДІЇ З ЗАМОВЛЕННЯМИ ---
@@ -150,12 +155,23 @@ async def approve_order(callback: types.CallbackQuery, bot: Bot):
     await callback.answer(f"Замовлення №{updated_order['order_number']} готове до видачі.", show_alert=True)
     
     captain_id = updated_order['captain_telegram_id']
-    text = f"✅ Ваше замовлення №{updated_order['order_number']} **готове**! Заберіть його у HelpDesk та підтвердіть отримання у розділі 'Мої замовлення'."
-    try: await bot.send_message(captain_id, text, parse_mode="Markdown")
-    except Exception as e: print(f"Помилка сповіщення: {e}")
-    await log_action(...)
+    text = f"✅ Ваше замовлення №{updated_order['order_number']} **готове**! Заберіть його у HelpDesk."
+    try: 
+        # --- ЗМІНЕНО --- Додано клавіатуру для капітана
+        await bot.send_message(captain_id, text, parse_mode="Markdown")
+    except Exception as e: 
+        print(f"Помилка сповіщення: {e}")
+        
+    # --- ЗМІНЕНО --- Додано інформативне логування
+    await log_action(
+        action="Order Approved",
+        user_id=callback.from_user.id,
+        username=callback.from_user.username,
+        team_name=updated_order['team_name'],
+        details=f"Order #{updated_order['order_number']}"
+    )
     
-    # Оновлюємо список замовлень
+    # Оновлюємо список замовлень для HelpDesk
     await show_active_orders(callback)
 
 
@@ -168,7 +184,9 @@ async def reject_order_start(callback: types.CallbackQuery, state: FSMContext):
 
     await state.set_state(RejectOrder.waiting_for_reason)
     await state.update_data(order_id_to_reject=order_id)
+    # Видаляємо старе повідомлення, щоб уникнути плутанини
     await callback.message.answer("Введіть причину відхилення:")
+    await callback.answer()
 
 @router.message(RejectOrder.waiting_for_reason)
 async def process_rejection_reason(message: types.Message, state: FSMContext, bot: Bot):
@@ -188,15 +206,30 @@ async def process_rejection_reason(message: types.Message, state: FSMContext, bo
     
     captain_id = order['captain_telegram_id']
     text = f"❌ Ваше замовлення №{order['order_number']} було **відхилено**.\n**Причина:** {reason}"
-    try: await bot.send_message(captain_id, text, parse_mode="Markdown")
-    except Exception as e: print(f"Помилка сповіщення: {e}")
+    try: 
+        await bot.send_message(
+            chat_id=captain_id, 
+            text=text, 
+            reply_markup=captain_menu_kb
+        )
+    except Exception as e: 
+        print(f"Помилка сповіщення капітана: {e}")
+
+    await log_action(
+        action="Order Rejected",
+        user_id=message.from_user.id,
+        username=message.from_user.username,
+        team_name=order['team_name'],
+        details=f"Order #{order['order_number']}. Reason: {reason}"
+    )
 
     await message.answer(f"Замовлення №{order['order_number']} відхилено. Причина: {reason}")
     await state.clear()
-    
-    # Після відхилення просто показуємо головне меню
     await message.answer("Повернення до головного меню...", reply_markup=get_helpdesk_menu_kb())
 
+
+# Переконайтеся, що на початку вашого файлу є цей імпорт
+from bot.keyboards.choices import captain_menu_kb
 
 # 3. Ручне підтвердження видачі (📦 Видано)
 @router.callback_query(F.data.startswith("hd_complete_"))
@@ -207,18 +240,37 @@ async def complete_order_manual(callback: types.CallbackQuery, bot: Bot):
         {"$set": {"status": "completed", "completed_at": datetime.datetime.now(datetime.timezone.utc)}},
         return_document=True
     )
-    if not updated_order: return await callback.answer("Замовлення має бути у статусі 'Готово'.", show_alert=True)
+    if not updated_order: 
+        return await callback.answer("Замовлення має бути у статусі 'Готово'.", show_alert=True)
     
     timestamp = datetime.datetime.now().strftime('%H:%M:%S')
-    await callback.answer(f"Замовлення №{updated_order['order_number']} видано о {timestamp}.", show_alert=True)
+    # await callback.answer(f"Замовлення №{updated_order['order_number']} видано о {timestamp}.", show_alert=True)
+    await callback.message.answer(
+        f"✅ Замовлення №{updated_order['order_number']} успішно видано о {timestamp}.",
+        reply_markup=get_helpdesk_menu_kb()
+    )
     await callback.message.delete()
     
     captain_id = updated_order['captain_telegram_id']
     text = f"📦 Ваше замовлення №{updated_order['order_number']} було видано та закрито HelpDesk."
-    try: await bot.send_message(captain_id, text)
-    except Exception as e: print(f"Помилка сповіщення: {e}")
-    await update_active_orders_view(callback.message)
-    await log_action("Order Completed (Manual)", callback.from_user.id, callback.from_user.username, updated_order['team_name'], f"Order #{updated_order['order_number']}")
+    
+    try: 
+        await bot.send_message(
+            chat_id=captain_id, 
+            text=text, 
+            reply_markup=captain_menu_kb
+        )
+    except Exception as e: 
+        print(f"Помилка сповіщення капітана: {e}")
+        
+    await update_active_orders_view(callback.message) # Припускаю, що ця функція оновлює список для HelpDesk
+    await log_action(
+        action="Order Completed (Manual)", 
+        user_id=callback.from_user.id, 
+        username=callback.from_user.username, 
+        team_name=updated_order['team_name'], 
+        details=f"Order #{updated_order['order_number']}"
+    )
 
 @router.message(RejectOrder.waiting_for_reason)
 async def process_rejection_reason(message: types.Message, state: FSMContext, bot: Bot):
@@ -264,15 +316,93 @@ async def process_rejection_reason(message: types.Message, state: FSMContext, bo
     await log_action("Order Rejected", message.from_user.id, message.from_user.username, order['team_name'], f"Order #{order['order_number']}, Reason: {reason}")
     await state.clear()
 
+@router.callback_query(F.data == "hd_change_team_budget")
+async def show_change_team_budget(callback: types.CallbackQuery):
+    """
+    Цей хендлер спрацьовує при натисканні на кнопку "Змінити бюджет команди".
+    Він дістає всі команди з бази даних і виводить їх у вигляді списку кнопок.
+    """
+    await callback.message.edit_text("⏳ Завантажую список команд...")
 
-# @router.callback_query(F.data == "hd_general_history")
-# async def show_general_history(callback: types.CallbackQuery):
-#     await callback.answer("Цей функціонал в розробці.", show_alert=True)
+    # Знаходимо всі документи, де є поле 'team_name' (фільтруємо системні ролі)
+    teams = await teams_collection.find({"team_name": {"$exists": True}}).to_list(length=100)
 
-# @router.callback_query(F.data == "hd_team_history")
-# async def show_team_history(callback: types.CallbackQuery):
-#     await callback.answer("Цей функціонал в розробці.", show_alert=True)
+    if not teams:
+        await callback.message.edit_text("❌ Не знайдено жодної команди.")
+        return
 
-# @router.callback_query(F.data == "hd_stock_view")
-# async def show_stock_view(callback: types.CallbackQuery):
-#     await callback.answer("Цей функціонал в розробці.", show_alert=True)
+    builder = InlineKeyboardBuilder()
+    for team in teams:
+        team_name = team.get('team_name', 'Без імені')
+        budget = team.get('budget', 0)
+        builder.button(
+            text=f"{team_name} | Бюджет: {budget}",
+            callback_data=f"edit_budget_for:{team_name}" # Створюємо унікальний callback
+        )
+    
+    builder.adjust(1) # Розміщуємо кнопки по одній в рядку
+
+    await callback.message.edit_text(
+        "Оберіть команду, для якої потрібно змінити бюджет:",
+        reply_markup=builder.as_markup()
+    )
+
+
+@router.callback_query(F.data.startswith("edit_budget_for:"))
+async def select_team_for_budget_change(callback: types.CallbackQuery, state: FSMContext):
+    """
+    Цей хендлер спрацьовує, коли користувач натискає на конкретну команду.
+    Він витягує назву команди з callback_data і переводить FSM у стан очікування.
+    """
+    team_name = callback.data.split(":")[1]
+    
+    # Зберігаємо назву команди у стані для подальшого використання
+    await state.update_data(team_to_edit=team_name)
+    
+    # Встановлюємо стан очікування нового бюджету
+    await state.set_state(ChangeBudget.waiting_for_new_budget)
+    
+    await callback.message.edit_text(
+        f"Ви обрали команду: **{team_name}**.\n\n"
+        f"Тепер, будь ласка, надішліть повідомленням новий бюджет для неї (тільки число).",
+        parse_mode="Markdown"
+    )
+    await callback.answer()
+
+
+@router.message(ChangeBudget.waiting_for_new_budget)
+async def process_new_budget(message: types.Message, state: FSMContext):
+    """
+    Цей хендлер приймає повідомлення від користувача, коли він перебуває у стані
+    waiting_for_new_budget. Він валідує введення та оновлює дані в БД.
+    """
+    # Валідація: перевіряємо, чи введено число
+    try:
+        new_budget = int(message.text)
+    except (ValueError, TypeError):
+        await message.answer("❌ **Помилка:** Будь ласка, введіть тільки число.\nСпробуйте ще раз.")
+        return
+
+    # Дістаємо назву команди, яку ми зберегли раніше
+    data = await state.get_data()
+    team_name = data.get('team_to_edit')
+
+    if not team_name:
+        await message.answer("❌ Сталася помилка, не вдалося знайти команду. Спробуйте почати спочатку.")
+        await state.clear()
+        return
+
+    # Оновлюємо бюджет команди в базі даних
+    await teams_collection.update_one(
+        {"team_name": team_name},
+        {"$set": {"budget": new_budget}}
+    )
+    
+    await message.answer(
+        f"✅ Бюджет для команди **{team_name}** успішно оновлено до **{new_budget}**." ,
+        reply_markup=get_helpdesk_menu_kb()
+    )
+
+    # Обов'язково очищуємо стан після завершення операції
+    await state.clear()
+

@@ -41,7 +41,7 @@ class SetLimits(StatesGroup):
 FIELD_MAP = {
     "name": "name",
     "description": "description",
-    "price": "base_price_uah",  # <--- Ось тут ми вказуємо правильне поле для ціни
+    "price": "base_price",  # <--- Ось тут ми вказуємо правильне поле для ціни
     "quantity": "stock_quantity" # <--- І тут для кількості, виходячи з вашої структури
 }
 
@@ -112,15 +112,13 @@ async def add_item_name(message: types.Message, state: FSMContext):
     """
     await state.update_data(name=message.text)
     await state.set_state(AddProduct.description)
-    await message.answer("Введіть опис товару:")
+    await message.answer("Введіть категорію товару (1-6):")
 
 # 3. Отримує опис, зберігає і просить ввести ціну
 @router.message(AddProduct.description)
-async def add_item_description(message: types.Message, state: FSMContext):
-    """
-    Обробляє введений опис, зберігає його та переходить до очікування ціни.
-    """
-    await state.update_data(description=message.text)
+async def add_item_tier(message: types.Message, state: FSMContext):
+ 
+    await state.update_data(description="Tier " + message.text)
     await state.set_state(AddProduct.price)
     await message.answer("Введіть ціну товару (тільки число):")
 
@@ -135,7 +133,7 @@ async def add_item_price(message: types.Message, state: FSMContext):
         await message.answer("Помилка: ціна повинна бути числом. Спробуйте ще раз.")
         return # Залишаємо користувача в поточному стані, щоб він міг виправити помилку
         
-    await state.update_data(price_coupons=int(message.text)) # Зберігаємо як число
+    await state.update_data(base_price=int(message.text)) # Зберігаємо як число
     await state.set_state(AddProduct.quantity)
     await message.answer("Введіть початкову кількість товару (тільки число):")
 
@@ -157,7 +155,7 @@ async def add_item_quantity(message: types.Message, state: FSMContext):
     product_data = await state.get_data()
     
     # Для сумісності з вашою структурою, можна додати поля за замовчуванням
-    product_data.setdefault('base_price_uah', 0)
+    # product_data.setdefault('base_price', product_data.p)
     product_data.setdefault('coefficient', 1.0)
     
     print(f"Дані для вставки в БД: {product_data}")
@@ -304,7 +302,7 @@ async def view_items(callback: types.CallbackQuery):
     response_text = "📋 Список всіх товарів:\n\n"
     for p in products:
         response_text += (f"**{p.get('name')}**\n"
-                          f"- Ціна: {p.get('base_price_uah')}, Кількість: {p.get('quantity_description')}\n"
+                          f"- Ціна: {p.get('base_price')}, Кількість: {p.get('quantity_description')}\n"
                           f"- Опис: {p.get('description')}\n---\n")
     await callback.message.edit_text(response_text, reply_markup=get_manage_items_kb(), parse_mode="Markdown")
 
@@ -322,7 +320,7 @@ async def update_all_prices():
     updated_count = 0
 
     for product in all_products:
-        base_price = product.get('base_price_uah', 0)
+        base_price = product.get('base_price', 0)
         coeff = product.get('coefficient', 1.0)
         new_price = base_price * coeff
 
